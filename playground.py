@@ -10,7 +10,8 @@ import json
 import shapely
 # from shapely.ops import transform
 from typing import List
-
+import cv2
+import numpy as np
 
 rim_path = "Data/geotiffs/tier1/images" # images relative path
 rpoly_path = "Data/geotiffs/tier1/labels" # labels relative path
@@ -85,10 +86,10 @@ for idx, raster_path in enumerate(rimgs):
             img = raster.read([1,2,3]) # returns 3-d array : i.e. (bands, h, w)
 
             # Raster IO → (bands, rows, cols)
-            # plotting → (rows, cols, channels)
-            img = img.transpose(1,2,0) # reorder the img array to follow (h,w,band) order as matplotlib adheres to such an order
+            # plotting/ml stuff → (rows, cols, channels)
+            img = img.transpose(1,2,0) # transpose the img array to follow (h,w,band) order
 
-
+            height, width = img.shape[:2]
 
             # coordinate transformer to ensure ploygons and raster follow the same CRS, preventing misalignment of polygons in the final plot
             # crs_trans = Transformer.from_crs(
@@ -100,11 +101,13 @@ for idx, raster_path in enumerate(rimgs):
             # poly_proj = transform(crs_trans.transform, polygons)
 
             # plot raster
-            fig, ax = plt.subplots(1,2,figsize=(10, 10))
+            fig, ax = plt.subplots(1,3,figsize=(10, 10))
             ax[0].set_title("Original raster")
             ax[0].imshow(img)
 
             transform = raster.transform
+
+            mask = np.zeros((height, width), dtype=np.uint8)
 
             for poly in polygons:
                 # following piece of code to be used if lang_lat coords were use for polygns. however, there seems to be some offset in where the polys are drawn and where
@@ -114,11 +117,12 @@ for idx, raster_path in enumerate(rimgs):
                 # patch = MplPolygon(coords, closed=True, facecolor='red', alpha=0.4)
                 #ax.add_patch(patch)
                 
-                x, y = poly.exterior.xy
+                coords = poly.exterior.coords
 
                 # MplPolygon is used for drawing "patches", plt.plot will only draw line but this will allow more customization over poly as a patch over the image
                 # requires a (x,y) pair tuples
-                coords = list(zip(x, y))
+                # fix : used poly.exterior.coords as it returns the same thing as below - 
+                # coords = list(zip(x, y))
 
                 patch = MplPolygon(
                     coords,
@@ -130,6 +134,17 @@ for idx, raster_path in enumerate(rimgs):
                 ax[1].set_title("Raster w Polys")
                 ax[1].imshow(img)
                 ax[1].add_patch(patch)
+
+                # get the mask
+                # Extracts polygon boundary points -> ensures image bounds are adhered to -> fills them on the mask
+                poly_pts = np.array(coords, dtype=np.int32)
+                poly_pts[:, 0] = np.clip(poly_pts[:, 0], 0, width - 1) # ensurin' polygons DO NOT exceed image bounds
+                poly_pts[:, 1] = np.clip(poly_pts[:, 1], 0, height - 1)
+            
+                cv2.fillPoly(mask, [poly_pts], 255)
+
+            ax[2].set_title("Generated mask")
+            ax[2].imshow(mask, cmap="gray")
 
             plt.show()
 
