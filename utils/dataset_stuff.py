@@ -1,37 +1,15 @@
 # Utility funcs for concoting da dataset
 
-import os
 import shapely
 import rasterio
 import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 from typing import List
 from numpy.typing import NDArray
 import json
 import cv2
 
-rasters_dir = "Data/geotiffs/tier1/images"
-labels_dir = "Data/geotiffs/tier1/labels"
 
-
-def create_dirs():
-    '''
-    Docstring for create_dirs
-
-    create directories for train-test split
-    '''
-    cwd = os.getcwd()
-    os.makedirs(os.path.join(cwd, 'model_data/train/img'), exist_ok=True)
-    os.makedirs(os.path.join(cwd, 'model_data/train/mask'), exist_ok=True)
-    os.makedirs(os.path.join(cwd, 'model_data/test/img'), exist_ok=True)
-    os.makedirs(os.path.join(cwd, 'model_data/test/mask'), exist_ok=True)
-
-    print(f"Directories created or already exist at {cwd+'model_data'}"); return
-
-
-
-def get_poly(features_path: str) -> List:
+def get_poly(labels_dir : str, features_path: str) -> List:
     '''
     Docstring for get_poly
     
@@ -70,7 +48,7 @@ def get_poly(features_path: str) -> List:
     return polys
 
 
-def extract_mask(raster_image: NDArray[np.uint8], poly_coords : List) -> NDArray[np.bool_]:
+def extract_mask(raster_image: NDArray[np.uint8], labels_dir : str , labels_path : str) -> NDArray[np.bool_]:
     '''
     Docstring for extract_mask
     
@@ -79,7 +57,10 @@ def extract_mask(raster_image: NDArray[np.uint8], poly_coords : List) -> NDArray
     :return: 1-d array containing a binary mask of the image
     :rtype: NDArray[bool_]
     '''
-    height, width = raster_image.shape[:2]
+
+    poly_coords = get_poly(labels_dir=labels_dir, features_path=labels_path)
+
+    height, width = raster_image.shape[1:]
     mask = np.zeros((height, width), dtype=np.uint8)
 
     for poly in poly_coords:
@@ -93,37 +74,30 @@ def extract_mask(raster_image: NDArray[np.uint8], poly_coords : List) -> NDArray
     return mask
 
 
-rasters = os.listdir(rasters_dir)
-lables = os.listdir(labels_dir)
+def get_raster_data(rasters_dir : str, f_path : str) -> NDArray:
 
-for idx, raster_path in enumerate(rasters):
+    '''
+    Docstring for get_raster_data
+    
+    :param rasters_dir: string containinf the directory path of the images
+    :type rasters_dir: str
+    :param f_path: string containing the directory path for the image in question
+    :type f_path: str
+    :return: array containing image data in H,W,C format
+    :rtype: NDArray
+    '''
 
-    poly_path = lables[idx]
+    with rasterio.open(rasters_dir + '/' + f_path) as r:
 
-    if raster_path.split('.')[0] == poly_path.split('.')[0]:
+        img = r.read([1,2,3]) # returns 3-d array : i.e. (bands, h, w)
 
-        polys = get_poly(poly_path)
+        # Raster IO → (bands, rows, cols)
+        # plotting/ml stuff → (rows, cols, channels/bands)
+        # since no plottin being done and torch tensors also expect c,h,w we wont transponse now
+        # img = img.transpose(1,2,0) # transpose the img array to follow (h,w,band) order
 
-        with rasterio.open(rasters_dir + '/' + raster_path) as r:
+    return img
 
-            img = r.read([1,2,3]) # returns 3-d array : i.e. (bands, h, w)
-
-            # Raster IO → (bands, rows, cols)
-            # plotting/ml stuff → (rows, cols, channels/bands)
-            img = img.transpose(1,2,0) # transpose the img array to follow (h,w,band) order
-
-            mask = extract_mask(raster_image=img, poly_coords=polys)
-            
-            fig, ax = plt.subplots(1,2,figsize=(10, 10))
-            ax[0].imshow(img)
-            ax[1].imshow(mask, cmap='gray')
-            plt.show()
-
-        print("we out")
-        break
-
-    else:
-        assert f"Mismatched paths: Image and Label paths are not the same. Raster path: {raster_path}\nLabel path: {poly_path}"
 
         
 
