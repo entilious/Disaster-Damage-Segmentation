@@ -12,8 +12,8 @@ class TiffDataset(Dataset):
     def __init__(self):
         self.rasters_dir = "Data/geotiffs/tier1/images"
         self.labels_dir = "Data/geotiffs/tier1/labels"
-        self.rasters_paths = os.listdir("Data/geotiffs/tier1/images") # update accordingly gng
-        self.labels_paths = os.listdir("Data/geotiffs/tier1/labels") # update accordingly gng
+        self.rasters_paths = sorted(os.listdir("Data/geotiffs/tier1/images")) # update accordingly gng
+        self.labels_paths = sorted(os.listdir("Data/geotiffs/tier1/labels")) # update accordingly gng
 
 
     def __len__(self):
