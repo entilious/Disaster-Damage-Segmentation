@@ -5,6 +5,54 @@ from lazy_loader_thing import TiffDataset
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+
+def check_accuracy(loader, model, device="cuda"):
+    num_correct = 0
+    num_pixels = 0
+    dice_score = 0
+    model.eval()
+
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+            y = y.to(device)
+            preds = torch.sigmoid(model(x))
+            preds = (preds > 0.5).float()
+            num_correct += (preds == y).sum()
+            num_pixels += torch.numel(preds)
+            dice_score += (2 * (preds * y).sum()) / (
+                (preds + y).sum() + 1e-8
+            )
+
+    print(
+        f"Got {num_correct}/{num_pixels} with acc {num_correct/num_pixels*100:.2f}"
+    )
+    print(f"Dice score: {dice_score/len(loader)}")
+    model.train()
+
+def calculate_iou(outputs, masks, threshold=0.5, epsilon=1e-6):
+    # Apply sigmoid to convert logits to probabilities [0, 1]
+    preds = torch.sigmoid(outputs)
+    
+    # Convert probabilities to binary mask (0 or 1)
+    preds = (preds > threshold).float()
+    
+    # Flatten the tensors to 1D arrays for easier calculation
+    # (Batch, Channel, Height, Width) -> (N,)
+    preds = preds.view(-1)
+    masks = masks.view(-1)
+    
+    # Calculate Intersection and Union
+    intersection = (preds * masks).sum()
+    union = preds.sum() + masks.sum() - intersection
+    
+    # Calculate IoU (add epsilon to avoid division by zero)
+    iou = (intersection + epsilon) / (union + epsilon)
+    
+    return iou.item()
+
 
 class UNet(nn.Module):
 
@@ -146,7 +194,7 @@ if __name__ == "__main__":
     train_loader = DataLoader(
         train_dataset,
         batch_size=1,
-        shuffle=True,
+        shuffle=False,
         num_workers=4,
         pin_memory=True
     )
@@ -183,8 +231,11 @@ if __name__ == "__main__":
         # training
         model.train()
         train_loss = 0.0
+        train_iou = 0.0
+        
+        prog_bar = tqdm(train_loader, desc=f"Training Epoch {epoch+1}")
 
-        for images, masks in train_loader:
+        for images, masks in prog_bar:
 
             images = images.to(device)
             masks = masks.to(device)
@@ -194,6 +245,8 @@ if __name__ == "__main__":
             with torch.amp.autocast("cuda"):
                 outputs = model(images)
                 loss = criterion(outputs, masks)
+                iou = calculate_iou(outputs, masks)
+                train_iou += iou
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -201,12 +254,18 @@ if __name__ == "__main__":
 
             train_loss += loss.item()
 
+        
+        train_loss /= len(train_loader)
+        train_iou /= len(train_loader)
+
         # validation
         model.eval()
         val_loss = 0.0
+        val_iou = 0.0
 
         with torch.no_grad():
-            for images, masks in val_loader:
+            prog_bar = tqdm(val_loader, desc=f"Validation Epoch {epoch+1}")
+            for images, masks in prog_bar:
 
                 images = images.to(device)
                 masks = masks.to(device)
@@ -214,9 +273,12 @@ if __name__ == "__main__":
                 outputs = model(images)
                 loss = criterion(outputs, masks)
 
+                val_iou += calculate_iou(outputs, masks)
+
                 val_loss += loss.item()
 
         val_loss /= len(val_loader)
+        val_iou /= len(val_loader)
 
         if val_loss < best_val:
             best_val = val_loss
@@ -236,7 +298,8 @@ if __name__ == "__main__":
     test_loss = 0.0
 
     with torch.no_grad():
-        for images, masks in test_loader:
+        
+        for images, masks in tqdm(test_loader):
 
             images = images.to(device)
             masks = masks.to(device)
