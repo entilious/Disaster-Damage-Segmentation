@@ -291,7 +291,7 @@ if __name__ == "__main__":
             }, "best_model.pth")
 
 
-        print(f"Epoch {epoch+1} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
+        print(f"Epoch {epoch+1} | Train (IoU): {train_iou:.4f} | Val (IoU): {val_iou:.4f}")
 
 
     model.eval()
