@@ -127,86 +127,116 @@ class UNet(nn.Module):
 
 
 ## run space
+if __name__ == "__main__":
+    dataset = TiffDataset()
 
-dataset = TiffDataset()
+    dataset_size = len(dataset)
 
-dataset_size = len(dataset)
+    # TiffDataset() is not set to create splits and i cba to change all that now. im going to manually create the splits - 70%, 15%, 15%
+    train_size = int(0.7 * dataset_size)
+    val_size   = int(0.15 * dataset_size)
+    test_size  = dataset_size - train_size - val_size # im not usign int(0.15*dataset_size) bc i want the remainder. if int(0.15*dataset_size) were used, val_zise and test_size would be same which is not possible as int conversion will perform int division and thus val_size cannot = test_size. the offset must be there
 
-# TiffDataset() is not set to create splits and i cba to change all that now. im going to manually create the splits - 70%, 15%, 15%
-train_size = int(0.7 * dataset_size)
-val_size   = int(0.15 * dataset_size)
-test_size  = dataset_size - train_size - val_size # im not usign int(0.15*dataset_size) bc i want the remainder. if int(0.15*dataset_size) were used, val_zise and test_size would be same which is not possible as int conversion will perform int division and thus val_size cannot = test_size. the offset must be there
+    train_dataset, val_dataset, test_dataset = random_split(
+        dataset,
+        [train_size, val_size, test_size],
+        generator=torch.Generator().manual_seed(42)
+    )
 
-train_dataset, val_dataset, test_dataset = random_split(
-    dataset,
-    [train_size, val_size, test_size],
-    generator=torch.Generator().manual_seed(42)
-)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True
+    )
 
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=1,
-    shuffle=True,
-    num_workers=4,
-    pin_memory=True
-)
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
 
-val_loader = DataLoader(
-    val_dataset,
-    batch_size=1,
-    shuffle=False,
-    num_workers=4,
-    pin_memory=True
-)
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=1,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True
+    )
 
-test_loader = DataLoader(
-    test_dataset,
-    batch_size=1,
-    shuffle=False,
-    num_workers=4,
-    pin_memory=True
-)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = UNet().to(device=device)
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 
-model = UNet().to(device=device)
-criterion = nn.BCEWithLogitsLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    scaler = torch.amp.GradScaler("cuda")
 
-scaler = torch.amp.GradScaler("cuda")
+    #checkpointing 
+    best_val = float("inf")
 
-#checkpointing 
-best_val = float("inf")
+    for epoch in range(100):
 
-for epoch in range(100):
+        # training
+        model.train()
+        train_loss = 0.0
 
-    # training
-    model.train()
-    train_loss = 0.0
+        for images, masks in train_loader:
 
-    for images, masks in train_loader:
+            images = images.to(device)
+            masks = masks.to(device)
 
-        images = images.to(device)
-        masks = masks.to(device)
+            optimizer.zero_grad()
 
-        optimizer.zero_grad()
+            with torch.amp.autocast("cuda"):
+                outputs = model(images)
+                loss = criterion(outputs, masks)
 
-        with torch.amp.autocast("cuda"):
-            outputs = model(images)
-            loss = criterion(outputs, masks)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
+            train_loss += loss.item()
 
-        train_loss += loss.item()
+        # validation
+        model.eval()
+        val_loss = 0.0
 
-    # validation
+        with torch.no_grad():
+            for images, masks in val_loader:
+
+                images = images.to(device)
+                masks = masks.to(device)
+
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+
+                val_loss += loss.item()
+
+        val_loss /= len(val_loader)
+
+        if val_loss < best_val:
+            best_val = val_loss
+            # save best model
+            torch.save({
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "val_loss": val_loss
+            }, "best_model.pth")
+
+
+        print(f"Epoch {epoch+1} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
+
+
     model.eval()
-    val_loss = 0.0
+    test_loss = 0.0
 
     with torch.no_grad():
-        for images, masks in val_loader:
+        for images, masks in test_loader:
 
             images = images.to(device)
             masks = masks.to(device)
@@ -214,69 +244,39 @@ for epoch in range(100):
             outputs = model(images)
             loss = criterion(outputs, masks)
 
-            val_loss += loss.item()
+            test_loss += loss.item()
 
-    val_loss /= len(val_loader)
+    test_loss /= len(test_loader)
 
-    if val_loss < best_val:
-        best_val = val_loss
-        # save best model
-        torch.save({
-        "epoch": epoch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "val_loss": val_loss
-        }, "best_model.pth")
+    print(f"Test Loss: {test_loss:.4f}")
 
+    model.eval()
 
-    print(f"Epoch {epoch+1} | Train: {train_loss:.4f} | Val: {val_loss:.4f}")
+    images, masks = next(iter(test_loader))
+    images = images.to(device)
 
-
-model.eval()
-test_loss = 0.0
-
-with torch.no_grad():
-    for images, masks in test_loader:
-
-        images = images.to(device)
-        masks = masks.to(device)
-
+    with torch.no_grad():
         outputs = model(images)
-        loss = criterion(outputs, masks)
+        preds = torch.sigmoid(outputs)
+        preds = (preds > 0.5).float()
 
-        test_loss += loss.item()
+    img = images[0].cpu().permute(1,2,0)
+    mask = masks[0][0]
+    pred = preds[0][0].cpu()
 
-test_loss /= len(test_loader)
+    plt.figure(figsize=(12,4))
 
-print(f"Test Loss: {test_loss:.4f}")
+    plt.subplot(1,3,1)
+    plt.title("Image")
+    plt.imshow(img)
 
-model.eval()
+    plt.subplot(1,3,2)
+    plt.title("Ground Truth")
+    plt.imshow(mask, cmap="gray")
 
-images, masks = next(iter(test_loader))
-images = images.to(device)
+    plt.subplot(1,3,3)
+    plt.title("Prediction")
+    plt.imshow(pred, cmap="gray")
 
-with torch.no_grad():
-    outputs = model(images)
-    preds = torch.sigmoid(outputs)
-    preds = (preds > 0.5).float()
-
-img = images[0].cpu().permute(1,2,0)
-mask = masks[0][0]
-pred = preds[0][0].cpu()
-
-plt.figure(figsize=(12,4))
-
-plt.subplot(1,3,1)
-plt.title("Image")
-plt.imshow(img)
-
-plt.subplot(1,3,2)
-plt.title("Ground Truth")
-plt.imshow(mask, cmap="gray")
-
-plt.subplot(1,3,3)
-plt.title("Prediction")
-plt.imshow(pred, cmap="gray")
-
-plt.show()
+    plt.show()
 
