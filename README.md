@@ -1,4 +1,4 @@
-# Disaster-God
+# Disaster-Damage-Segmentation
 
 A deep learning project for **semantic segmentation of disaster-affected areas** using satellite imagery. This model identifies damaged buildings and affected regions in pre and post-disaster satellite images.
 
