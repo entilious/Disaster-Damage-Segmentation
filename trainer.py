@@ -194,7 +194,7 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=1,
+        batch_size=2,
         shuffle=False,
         num_workers=4,
         pin_memory=True
@@ -225,9 +225,13 @@ if __name__ == "__main__":
     scaler = torch.amp.GradScaler("cuda")
 
     #checkpointing 
-    best_val = float("inf")
+    best_val = float("-inf")
+    best_epoch = 0
 
     for epoch in range(100):
+
+        if epoch - best_epoch > 7: # early-stopping mech if no improvements for more than 7 epochs
+            break
 
         # training
         model.train()
@@ -281,14 +285,15 @@ if __name__ == "__main__":
         val_loss /= len(val_loader)
         val_iou /= len(val_loader)
 
-        if val_iou < best_val:
+        if val_iou > best_val and (train_iou-val_iou) <= 0.15: # check: if difference b/w train and val iou is greater than 0.15, might be overfittin
+            best_epoch = epoch
             best_val = val_iou
             # save best model
             torch.save({
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
-            "val_loss": val_loss
+            "val_iou": val_iou
             }, "best_model.pth")
 
 
@@ -297,6 +302,7 @@ if __name__ == "__main__":
 
     model.eval()
     test_loss = 0.0
+    test_iou = 0.0
 
     with torch.no_grad():
         
@@ -309,8 +315,10 @@ if __name__ == "__main__":
             loss = criterion(outputs, masks)
 
             test_loss += loss.item()
+            test_iou += calculate_iou(outputs, masks)
 
     test_loss /= len(test_loader)
+    test_iou /= len(test_loader)
 
     print(f"Test Loss: {test_loss:.4f}")
 
