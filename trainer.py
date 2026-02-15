@@ -32,6 +32,7 @@ def check_accuracy(loader, model, device="cuda"):
     print(f"Dice score: {dice_score/len(loader)}")
     model.train()
 
+
 def calculate_iou(outputs, masks, threshold=0.5, epsilon=1e-6):
     # Apply sigmoid to convert logits to probabilities [0, 1]
     preds = torch.sigmoid(outputs)
@@ -280,8 +281,8 @@ if __name__ == "__main__":
         val_loss /= len(val_loader)
         val_iou /= len(val_loader)
 
-        if val_loss < best_val:
-            best_val = val_loss
+        if val_iou < best_val:
+            best_val = val_iou
             # save best model
             torch.save({
             "epoch": epoch,
